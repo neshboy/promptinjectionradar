@@ -1,0 +1,41 @@
+{
+  "name": "promptinjectionradar",
+  "version": "0.1.0",
+  "description": "A content-security filter that scans untrusted external content (web pages, documents, tool output) for prompt-injection attempts before an AI agent acts on it.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "promptinjectionradar": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cli": "tsx src/cli.ts",
+    "proxy": "tsx src/cli.ts proxy",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "prompt-injection",
+    "ai-security",
+    "llm-security",
+    "agent-security",
+    "content-security"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
