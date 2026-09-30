@@ -252,7 +252,7 @@ export const PATTERN_RULES: PatternRule[] = [
     category: "authority_escalation",
     severity: "medium",
     description: "Uses a fake bracketed system/admin/override tag to impersonate a privileged channel.",
-    pattern: /\[(SYSTEM|ADMIN|OVERRIDE|ROOT)\]\s*:?/,
+    pattern: /\[(SYSTEM|ADMIN|OVERRIDE|ROOT)\]\s*:?/i,
   },
   {
     id: "authority.root-access-execute",

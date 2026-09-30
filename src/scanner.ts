@@ -25,6 +25,17 @@ const SEVERITY_RANK: Record<Severity, number> = {
 const DEFAULT_FAIL_ON: Severity = "high";
 const DEFAULT_MAX_DECODE_DEPTH = 1;
 
+// Precompute a global-flag RegExp for each rule once at module load, rather
+// than recompiling one from scratch on every runPatternLibrary() call (which
+// happens once for the plain pass, once per zero-width-stripped pass, once
+// per HTML comment, once per CSS-hidden block, and once per decoded base64
+// block). String.prototype.matchAll() resets lastIndex internally per call,
+// so reusing the same compiled RegExp instance across calls is safe.
+const GLOBAL_RULES = PATTERN_RULES.map((rule) => ({
+  ...rule,
+  re: new RegExp(rule.pattern.source, rule.pattern.flags.includes("g") ? rule.pattern.flags : rule.pattern.flags + "g"),
+}));
+
 /** Run the core pattern library (direct_override, exfiltration, fetch_execute, authority_escalation) against a plain string. */
 function runPatternLibrary(
   text: string,
@@ -32,10 +43,8 @@ function runPatternLibrary(
   decodedContent?: string,
 ): Finding[] {
   const findings: Finding[] = [];
-  for (const rule of PATTERN_RULES) {
-    // Reset regex state defensively (our rules aren't declared with /g, but be safe).
-    const re = new RegExp(rule.pattern.source, rule.pattern.flags.includes("g") ? rule.pattern.flags : rule.pattern.flags + "g");
-    for (const m of text.matchAll(re)) {
+  for (const rule of GLOBAL_RULES) {
+    for (const m of text.matchAll(rule.re)) {
       if (m.index === undefined) continue;
       findings.push({
         ruleId: rule.id,
@@ -78,6 +87,8 @@ function runPatternLibrary(
 export function scan(content: string, options: ScanOptions = {}): ScanResult {
   const maxDecodeDepth = options.maxDecodeDepth ?? DEFAULT_MAX_DECODE_DEPTH;
   const findings: Finding[] = [];
+  const base64Candidates = new Set<string>();
+  let base64DecodedCount = 0;
 
   // 1. Plain-text pattern matches.
   findings.push(...runPatternLibrary(content, "plain"));
@@ -117,6 +128,32 @@ export function scan(content: string, options: ScanOptions = {}): ScanResult {
           findings.push(f);
         }
       }
+
+      // Also re-run base64 detection on the stripped text: an attacker can
+      // splice a zero-width character into an otherwise-valid base64 blob
+      // to dodge the base64 detector below (which only sees the original,
+      // still-spliced `content`) while the blob decodes just fine once the
+      // invisible character is removed.
+      if (maxDecodeDepth > 0) {
+        const { candidates, decoded } = findDecodableBase64Blocks(stripped);
+        for (const c of candidates) base64Candidates.add(c.raw);
+        base64DecodedCount += decoded.length;
+        for (const block of decoded) {
+          findings.push({
+            ruleId: "encoded.base64-decoded-block",
+            category: "encoded_instructions",
+            severity: "medium",
+            description: `Found a base64-encoded block (revealed after stripping zero-width characters) that decodes to plausible text (entropy ${block.entropy.toFixed(
+              2,
+            )} bits/char). Decoded content was re-scanned.`,
+            matchedText: block.raw.slice(0, 120),
+            index: block.index,
+            source: "base64-decoded",
+            decodedContent: block.decoded,
+          });
+          findings.push(...runPatternLibrary(block.decoded, "base64-decoded", block.decoded));
+        }
+      }
     }
   }
 
@@ -153,12 +190,10 @@ export function scan(content: string, options: ScanOptions = {}): ScanResult {
 
   // 5. Base64 blocks: entropy-checked, round-trip-verified decode, then
   //    recursively re-scan the decoded text (bounded by maxDecodeDepth).
-  const base64Candidates = new Set<string>();
-  let base64DecodedCount = 0;
   if (maxDecodeDepth > 0) {
     const { candidates, decoded } = findDecodableBase64Blocks(content);
     for (const c of candidates) base64Candidates.add(c.raw);
-    base64DecodedCount = decoded.length;
+    base64DecodedCount += decoded.length;
     for (const block of decoded) {
       findings.push({
         ruleId: "encoded.base64-decoded-block",
@@ -172,12 +207,7 @@ export function scan(content: string, options: ScanOptions = {}): ScanResult {
         source: "base64-decoded",
         decodedContent: block.decoded,
       });
-      findings.push(
-        ...runPatternLibrary(block.decoded, "base64-decoded", block.decoded).map((f) => ({
-          ...f,
-          index: block.index,
-        })),
-      );
+      findings.push(...runPatternLibrary(block.decoded, "base64-decoded", block.decoded));
     }
   }
 
